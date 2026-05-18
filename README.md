@@ -18,3 +18,5 @@ Analyze perishable goods data to identify patterns and improve analytical insigh
 ## Files Included
 - CLEANING_DBD206.Rmd
 - EDA & MODELLING.Rmd
+- EDA.html
+- CLEANING_DBD206.html
