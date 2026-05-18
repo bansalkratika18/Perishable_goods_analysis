@@ -1,0 +1,788 @@
+---
+title: "CLEANING_DBD 206"
+author: "Kratika Bansal"
+date: "2026-02-05"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+```{r, echo=TRUE}
+my_data <- read.csv("C:/Users/krati/OneDrive/Desktop/perishable_goods_management.csv")
+original_data <- my_data
+library(dplyr)
+library(moments)
+str(original_data)
+glimpse(original_data)
+```
+
+
+```{r, echo=TRUE}
+# --- 1. HELPER FUNCTIONS (for each type of data issue) ---
+
+#' Introduce a percentage of missing values (NA) into random cells.
+#' @param df The input dataframe.
+#' @param p The percentage of total cells to replace with NA (e.g., 0.05 for 5%).
+#' @return The dataframe with NAs introduced.
+introduce_missing <- function(df, p) {
+  if (p <= 0) return(df)
+  n_total_cells <- prod(dim(df))
+  n_missing <- floor(n_total_cells * p)
+  
+  # Get random row and column indices. Ensure no duplicates.
+  indices <- sample(1:n_total_cells, n_missing)
+  row_indices <- (indices - 1) %% nrow(df) + 1
+  col_indices <- (indices - 1) %/% nrow(df) + 1
+  
+  for (i in 1:n_missing) {
+    df[row_indices[i], col_indices[i]] <- NA
+  }
+  return(df)
+}
+
+#' Introduce outliers into a percentage of rows for all numeric columns.
+#' @param df The input dataframe.
+#' @param p The percentage of rows to turn into outliers (e.g., 0.03 for 3%).
+#' @param magnitude The strength of the outlier (how many standard deviations from the mean).
+#' @return The dataframe with outliers.
+introduce_outliers <- function(df, p, magnitude = 5) {
+  if (p <= 0) return(df)
+  numeric_cols <- names(df)[sapply(df, is.numeric)]
+  
+  for (col in numeric_cols) {
+    n_outliers <- floor(nrow(df) * p)
+    if (n_outliers == 0) next
+    
+    rows_to_modify <- sample(1:nrow(df), n_outliers)
+    col_mean <- mean(df[[col]], na.rm = TRUE)
+    col_sd <- sd(df[[col]], na.rm = TRUE)
+    
+    # Generate extreme values (can be high or low)
+    outlier_values <- col_mean + (sample(c(-1, 1), n_outliers, replace = TRUE) * magnitude * col_sd)
+    df[rows_to_modify, col] <- outlier_values
+  }
+  return(df)
+}
+
+#' Introduce right-skewness to a specified numeric column.
+#' @param df The input dataframe.
+#' @param target_col The name of the numeric column to skew.
+#' @param skew_factor A value > 1 for right-skew (e.g., 2, 3). Value of 1 causes no change.
+#' @return The dataframe with the skewed column.
+introduce_skewness <- function(df, target_col, skew_factor) {
+  if (skew_factor <= 1 || is.null(target_col)) return(df)
+  if (!is.numeric(df[[target_col]])) {
+    warning(paste("Skewness can only be applied to numeric columns. Skipping:", target_col))
+    return(df)
+  }
+  
+  x <- df[[target_col]]
+  x_scaled <- (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+  x_skewed <- x_scaled ^ skew_factor
+  df[[target_col]] <- x_skewed * (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) + min(x, na.rm = TRUE)
+  return(df)
+}
+
+#' Introduce a percentage of duplicate rows.
+#' @param df The input dataframe.
+#' @param p The percentage of duplicate rows to add (e.g., 0.1 for 10%).
+#' @return The dataframe with added duplicate rows.
+introduce_duplicates <- function(df, p) {
+  if (p <= 0) return(df)
+  n_duplicates <- floor(nrow(df) * p)
+  rows_to_duplicate <- df[sample(1:nrow(df), n_duplicates, replace = TRUE), ]
+  return(rbind(df, rows_to_duplicate))
+}
+
+
+# --- 2. MASTER FUNCTION (to apply all corruptions) ---
+
+#' Applies a series of data quality issues to any given dataframe.
+#' @param input_df The original dataframe to corrupt.
+#' @param p_missing Percentage of total cells to set to NA.
+#' @param p_outliers Percentage of rows to receive outliers in numeric columns.
+#' @param p_duplicates Percentage of duplicate rows to add.
+#' @param skew_col (Optional) Name of the column to skew. If NULL, the script
+#'   will automatically select the first numeric column it finds.
+#' @param skew_factor The power to apply for skewness (e.g., 3 for strong right-skew).
+#' @return A new dataframe containing all the introduced data issues.
+corrupt_data_generic <- function(input_df, p_missing = 0.05, p_outliers = 0.03, p_duplicates = 0.10,
+                                 skew_col = NULL, skew_factor = 3) {
+  
+  message("--- Starting Data Corruption Process ---")
+  corrupted_df <- input_df
+  
+  # --- Step 1: Handle Skewness ---
+  # If a specific column isn't provided, find the first numeric one automatically
+  if (is.null(skew_col)) {
+    numeric_cols <- names(corrupted_df)[sapply(corrupted_df, is.numeric)]
+    if (length(numeric_cols) > 0) {
+      skew_col <- numeric_cols[1] # Auto-select the first numeric column
+      message(paste("No 'skew_col' provided. Automatically selected column '", skew_col, "' for skewness.", sep=""))
+    } else {
+      warning("Could not apply skewness: No numeric columns found in the dataset.")
+      skew_col <- NULL # Ensure it's null if no suitable column is found
+    }
+  }
+  corrupted_df <- introduce_skewness(corrupted_df, target_col = skew_col, skew_factor = skew_factor)
+  
+  # --- Step 2: Introduce Outliers ---
+  message(paste("Introducing outliers to ~", p_outliers * 100, "% of rows in numeric columns.", sep=""))
+  corrupted_df <- introduce_outliers(corrupted_df, p = p_outliers)
+  
+  # --- Step 3: Add Duplicates ---
+  message(paste("Adding ~", p_duplicates * 100, "% duplicate rows.", sep=""))
+  corrupted_df <- introduce_duplicates(corrupted_df, p = p_duplicates)
+  
+  # --- Step 4: Introduce Missing Values ---
+  message(paste("Introducing missing values to ~", p_missing * 100, "% of total cells.", sep=""))
+  corrupted_df <- introduce_missing(corrupted_df, p = p_missing)
+  
+  message("--- Corruption Process Complete ---")
+  
+  # Return the final corrupted dataframe
+  return(corrupted_df)
+}
+
+
+# --- 3. EXAMPLE USAGE ---
+# You would replace this with your own dataframe.
+
+# Load the original, clean data
+original_data <- my_data
+
+# --- Run the master corruption function ---
+# The function will automatically pick the first numeric column to skew.
+corrupted_data <- corrupt_data_generic(
+  input_df = original_data,
+  p_missing = 0.05,
+  p_outliers = 0.03,
+  p_duplicates = 0.15,
+  skew_factor = 3
+)
+
+
+# --- 4. VERIFICATION: Compare Original vs. Corrupted Data ---
+
+# Original Data Summary
+cat("\n\n--- ORIGINAL DATA SUMMARY ---\n")
+print(paste("Dimensions:", paste(dim(original_data), collapse = " x ")))
+print(paste("Total Missing Values:", sum(is.na(original_data))))
+print(paste("Number of Duplicates:", sum(duplicated(original_data))))
+print("Summary Statistics:")
+print(summary(original_data))
+
+
+# Corrupted Data Summary
+cat("\n\n--- CORRUPTED DATA SUMMARY ---\n")
+print(paste("Dimensions:", paste(dim(corrupted_data), collapse = " x ")))
+print(paste("Total Missing Values:", sum(is.na(corrupted_data))))
+print(paste("Number of Duplicates:", sum(duplicated(corrupted_data))))
+print("Summary Statistics:")
+print(summary(corrupted_data))
+
+# Check skewness on the auto-selected column
+# (The function printed which column it chose)
+skewed_col_name <- names(original_data)[sapply(original_data, is.numeric)][1]
+original_skew <- moments::skewness(original_data[[skewed_col_name]], na.rm = TRUE)
+corrupted_skew <- moments::skewness(corrupted_data[[skewed_col_name]], na.rm = TRUE)
+
+cat("\n--- Skewness Check on '", skewed_col_name, "' ---\n", sep = "")
+print(paste("Original Skewness:", round(original_skew, 3)))
+print(paste("Corrupted Skewness:", round(corrupted_skew, 3)))
+```
+```{r, echo=TRUE}
+
+duplicates_removed <- corrupted_data %>% distinct()
+
+record_id_cleaned <- duplicates_removed %>% mutate(record_id= row_number())
+# Removing invalid values
+
+shelf_life_days_invalid_removed <- record_id_cleaned %>% mutate(shelf_life_days = if_else(shelf_life_days >= 1 & shelf_life_days %% 1 == 0 , shelf_life_days, NA))
+
+days_remaining_at_purchased_invalid_removed <- shelf_life_days_invalid_removed %>% mutate(days_remaining_at_purchase= if_else(days_remaining_at_purchase>= 0 & days_remaining_at_purchase %% 1 == 0, days_remaining_at_purchase, NA))
+
+base_price_invalid_removed <- days_remaining_at_purchased_invalid_removed %>% mutate(base_price = if_else(base_price> 0 , base_price, NA))
+
+cost_price_invalid_removed <- base_price_invalid_removed %>% mutate(cost_price= if_else(cost_price> 0,  cost_price, NA))
+
+initial_quantity_invalid_removed <- cost_price_invalid_removed %>% mutate(initial_quantity= if_else(initial_quantity >0 & initial_quantity %% 1 == 0, initial_quantity, NA))
+
+day_of_week_invalid_removed <- initial_quantity_invalid_removed %>% mutate(day_of_week= if_else(day_of_week %in% 0:6, day_of_week, NA))
+
+is_weekend_invalid_removed <- day_of_week_invalid_removed %>% mutate(is_weekend= if_else(is_weekend %in% c(0,1), is_weekend, NA))
+
+month_invalid_removed <- is_weekend_invalid_removed %>% mutate(month= if_else(month %in% 1:12, month, NA))
+
+demand_variability_invalid_removed <- month_invalid_removed %>% mutate(demand_variability= if_else(demand_variability>= 0 & demand_variability<=1, demand_variability, NA))
+
+temp_abuse_events_invalid_removed <-  demand_variability_invalid_removed %>% mutate(temp_abuse_events= if_else(temp_abuse_events>= 0 & temp_abuse_events %% 1 == 0, temp_abuse_events, NA))
+
+days_until_expiry_invalid_removed <- temp_abuse_events_invalid_removed %>% mutate(days_until_expiry = if_else(days_until_expiry >=0 & days_until_expiry %% 1 == 0 & days_until_expiry <= shelf_life_days, days_until_expiry, NA))
+
+units_sold_invalid_removed <- days_until_expiry_invalid_removed %>% mutate(units_sold= if_else(units_sold>=0 & units_sold %% 1 == 0, units_sold, NA))
+
+units_wasted_invalid_removed <- units_sold_invalid_removed %>% mutate(units_wasted= if_else(units_wasted >=0 & units_wasted %% 1 == 0 , units_wasted, NA))
+
+waste_pct_invalid_removed <- units_wasted_invalid_removed %>% mutate(waste_pct = if_else(waste_pct >= 0 & waste_pct <= 100, waste_pct, NA))
+
+storage_temp_invalid_removed <- waste_pct_invalid_removed %>% mutate(storage_temp = if_else(storage_temp >= -30 & storage_temp <= 30, storage_temp, NA))
+
+temp_deviation_invalid_removed <- storage_temp_invalid_removed %>% mutate(temp_deviation = if_else( temp_deviation >= 0 & temp_deviation <= 9, temp_deviation, NA))
+
+selling_price_invalid_removed <- temp_deviation_invalid_removed %>% mutate(selling_price= if_else(selling_price >=0, selling_price, NA))
+
+markdown_applied_invalid_removed <- selling_price_invalid_removed %>% mutate(markdown_applied = if_else( markdown_applied %in% c(0, 1),markdown_applied, NA))
+
+discount_pct_invalid_removed <- markdown_applied_invalid_removed %>% mutate(discount_pct = if_else(discount_pct >= 0 & discount_pct <= 1, discount_pct, NA))
+
+revenue_invalid_removed <- discount_pct_invalid_removed %>% mutate(revenue = if_else(revenue >= 0, revenue, NA))
+
+waste_cost_invalid_removed <- revenue_invalid_removed %>% mutate(waste_cost = if_else(waste_cost >= 0, waste_cost, NA))
+
+profit_invalid_removed <- waste_cost_invalid_removed %>% mutate(profit = if_else (is.finite (profit), profit, NA)) 
+
+profit_margin_invalid_removed <- profit_invalid_removed %>% mutate(profit_margin_pct = if_else(is.finite (profit_margin_pct), profit_margin_pct, NA))
+
+spoilage_sensitivity_invalid_removed <- profit_margin_invalid_removed %>% mutate( spoilage_sensitivity = if_else( spoilage_sensitivity >= 0 & spoilage_sensitivity <= 1, spoilage_sensitivity, NA))
+
+daily_demand_invalid_removed <- spoilage_sensitivity_invalid_removed %>% mutate(daily_demand = if_else( daily_demand >= 0, daily_demand, NA))
+
+distribution_hours_invalid_removed <- daily_demand_invalid_removed %>% mutate (distribution_hours = if_else (is.finite(distribution_hours) & distribution_hours >= 0 & distribution_hours <= 168, distribution_hours, NA))
+
+handling_score_invalid_removed <- distribution_hours_invalid_removed %>% mutate( handling_score = if_else( handling_score %in% 1:10, handling_score, NA))
+
+packaging_score_invalid_removed <- handling_score_invalid_removed %>% mutate( packaging_score = if_else( packaging_score %in% 1:10, packaging_score, NA))
+
+spoilage_risk_invalid_removed <- packaging_score_invalid_removed %>% mutate( spoilage_risk = if_else( is.finite(spoilage_risk) & spoilage_risk >= 0 & spoilage_risk <= 1, spoilage_risk, NA))
+
+was_spoiled_invalid_removed <- spoilage_risk_invalid_removed %>% mutate( was_spoiled = if_else( was_spoiled %in% c(0, 1), was_spoiled, NA))
+
+supplier_score_invalid_removed <- was_spoiled_invalid_removed %>% mutate( supplier_score = if_else( supplier_score %in% 1:10, supplier_score, NA))
+
+is_promoted_invalid_removed <- supplier_score_invalid_removed %>% mutate( is_promoted = if_else( is_promoted %in% c(0, 1),is_promoted, NA))
+
+final_invalid_removed <- is_promoted_invalid_removed
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+```{r, echo=TRUE}
+# Imputation
+
+# Mean, median, mode imputation
+method1_set <- final_invalid_removed
+
+# Defining variable groups
+num_variables <- c(
+  "daily_demand",
+  "selling_price",
+  "cost_price",
+  "distribution_hours",
+  "storage_temp",
+  "temp_deviation",
+  "spoilage_risk",
+  "spoilage_sensitivity",
+  "revenue",
+  "waste_cost",
+  "profit",
+  "profit_margin_pct",
+  "waste_pct",
+  "base_price",
+  "demand_variability",
+  "handling_score",
+  "packaging_score",
+  "discount_pct",
+  "supplier_score"
+)
+
+
+count_variables <- c(
+  "units_sold",
+  "units_wasted",
+  "initial_quantity",
+  "temp_abuse_events",
+  "days_until_expiry",
+  "days_remaining_at_purchase",
+  "shelf_life_days"
+)
+
+cat_variables <- c(
+  "is_promoted",
+  "was_spoiled",
+  "quality_grade",
+  "markdown_applied",
+  "day_of_week",
+  "is_weekend",
+  "month",
+  "region",
+  "category"
+)
+
+
+library(e1071)
+library(tibble)
+
+skewness_table <- tibble(
+  variable = num_variables,
+  skewness = sapply(method1_set[num_variables], skewness, na.rm = TRUE)
+)
+skewness_table
+mean_variables <- skewness_table$variable[
+  abs(skewness_table$skewness) <= 0.5
+]
+
+median_variables <- skewness_table$variable[
+  abs(skewness_table$skewness) > 0.5
+]
+
+mean_variables
+median_variables
+
+
+
+# Mean imputation
+for (v in mean_variables) {
+  method1_set[[v]][is.na(method1_set[[v]])] <-
+    mean(method1_set[[v]], na.rm = TRUE)
+}
+
+# Median imputation
+for (v in median_variables) {
+  method1_set[[v]][is.na(method1_set[[v]])] <-
+    median(method1_set[[v]], na.rm = TRUE)
+}
+
+# Count variables
+for (v in count_variables) {
+  method1_set[[v]][is.na(method1_set[[v]])] <-
+    round(median(method1_set[[v]], na.rm = TRUE))
+}
+
+# Mode for categorical
+get_mode <- function(x) {
+  ux <- na.omit(x)
+  ux[which.max(tabulate(match(ux, ux)))]
+}
+
+for (v in cat_variables) {
+  method1_set[[v]][is.na(method1_set[[v]])] <-
+    get_mode(method1_set[[v]])
+}
+
+method1_set <- method1_set %>%
+  mutate(
+    handling_score = round(handling_score),
+    packaging_score = round(packaging_score),
+    supplier_score = round(supplier_score)
+  )
+
+
+colSums(is.na(method1_set))
+summary(method1_set[mean_variables])
+summary(method1_set[median_variables])
+
+
+```
+```{r, echo=TRUE}
+# Method 2: Constraint based and Mice imputation
+method2_set <- final_invalid_removed
+
+# Initial quantity
+initial_quantity_cbi <- method2_set %>%
+  mutate(
+    initial_quantity = if_else(
+      is.na(initial_quantity) &
+      !is.na(units_sold) &
+      !is.na(units_wasted),
+      units_sold + units_wasted,
+      initial_quantity
+    )
+  )
+# units sold
+units_sold_cbi <- initial_quantity_cbi %>%
+  mutate(
+    units_sold = if_else(
+      is.na(units_sold) &
+      !is.na(initial_quantity) &
+      !is.na(units_wasted),
+      pmax(initial_quantity - units_wasted, 0),
+      units_sold
+    )
+  )
+
+# waste percent
+
+waste_pct_cbi <- units_sold_cbi %>%
+  mutate(
+    waste_pct = if_else(
+      is.na(waste_pct) &
+      !is.na(units_wasted) &
+      !is.na(initial_quantity) &
+      initial_quantity > 0,
+      (units_wasted / initial_quantity) * 100,
+      waste_pct
+    )
+  )
+
+# Revenue = selling_price × units_sold
+
+revenue_cbi <- waste_pct_cbi %>%
+  mutate(
+    revenue = if_else(
+      is.na(revenue) &
+      !is.na(selling_price) &
+      !is.na(units_sold),
+      selling_price * units_sold,
+      revenue
+    )
+  )
+# waste cost
+
+waste_cost_cbi <- revenue_cbi %>%
+  mutate(
+    waste_cost = if_else(
+      is.na(waste_cost) &
+      !is.na(cost_price) &
+      !is.na(units_wasted),
+      cost_price * units_wasted,
+      waste_cost
+    )
+  )
+
+# profit = revenue − (cost_price × units_sold) − waste_cost
+
+profit_cbi <- waste_cost_cbi %>%
+  mutate(
+    profit = if_else(
+      is.na(profit) &
+      !is.na(revenue) &
+      !is.na(cost_price) &
+      !is.na(units_sold) &
+      !is.na(waste_cost),
+      revenue - (cost_price * units_sold) - waste_cost,
+      profit
+    )
+  )
+# Profit margin percent 
+profit_margin_cbi <- profit_cbi %>%
+  mutate(
+    profit_margin_pct = if_else(
+      is.na(profit_margin_pct) &
+      !is.na(profit) &
+      !is.na(revenue) &
+      revenue > 0,
+      (profit / revenue) * 100,
+      profit_margin_pct
+    )
+  )
+cbi_completed<- profit_margin_cbi
+
+colSums(is.na(cbi_completed))
+
+cbi_variables <- c(
+  "initial_quantity",
+  "units_sold",
+  "waste_pct",
+  "revenue",
+  "waste_cost",
+  "profit",
+  "profit_margin_pct"
+)
+na_before_cbi <- colSums(is.na(method2_set[cbi_variables]))
+na_before_cbi
+na_after_cbi <- colSums(is.na(cbi_completed[cbi_variables]))
+na_after_cbi
+na_comparison <- data.frame(
+
+  NA_before_CBI = na_before_cbi,
+  NA_after_CBI  = na_after_cbi
+)
+
+na_comparison
+
+# MICE imputation
+library(mice)
+
+
+mice_input <- cbi_completed %>%
+  mutate(
+    category = as.factor(category),
+    region = as.factor(region),
+    quality_grade = as.factor(quality_grade),
+    is_promoted = as.factor(is_promoted),
+    was_spoiled = as.factor(was_spoiled),
+    markdown_applied = as.factor(markdown_applied),
+    day_of_week = as.factor(day_of_week),
+    is_weekend = as.factor(is_weekend),
+    month = as.factor(month)
+  )
+
+mice_input <- mice_input %>%
+  select(
+    -record_id,
+    -product_id,
+    -product_name,
+    -store_id,
+    -supplier_id,
+    -transaction_date,
+    -expiration_date
+  )
+
+mice_imputation <- mice(
+  mice_input,
+  m = 1,          
+  method = "pmm", 
+  seed = 123
+)
+
+summary(mice_imputation)
+method2_complete <- complete(mice_imputation)
+
+method2_final <- cbind(
+  cbi_completed[, c(
+    "record_id",
+    "product_id",
+    "product_name",
+    "store_id",
+    "supplier_id",
+    "transaction_date",
+    "expiration_date"
+  )],
+  method2_complete
+)
+
+method2_final <- method2_final %>%
+  mutate(
+    days_until_expiry = if_else(
+      is.na(days_until_expiry) &
+      !is.na(shelf_life_days) &
+      !is.na(days_remaining_at_purchase),
+      shelf_life_days - days_remaining_at_purchase,
+      days_until_expiry
+    )
+  )
+
+colSums(is.na(method2_final))
+
+
+
+```
+```{r, echo=TRUE}
+# COMPARISON
+
+
+options(scipen = 999)
+
+imp_vars <- c(
+  "revenue",
+  "profit",
+  "daily_demand",
+  "distribution_hours",
+  "demand_variability"
+)
+
+options(scipen = 999)
+
+for (v in imp_vars) {
+  
+  cat("\n==============================\n")
+  cat("VARIABLE:", v, "\n")
+  cat("==============================\n\n")
+  
+  # Missing values check
+  cat("Missing Values:\n")
+  cat("Original:", sum(is.na(final_invalid_removed[[v]])), "\n")
+  cat("Method1 :", sum(is.na(method1_set[[v]])), "\n")
+  cat("Method2 :", sum(is.na(method2_final[[v]])), "\n\n")
+  
+  # Identical check
+  cat("Method1 vs Method2 identical?\n")
+  print(identical(method1_set[[v]], method2_final[[v]]))
+  
+  cat("\nSummary Statistics\n")
+  cat("Method1:\n")
+  print(summary(method1_set[[v]]))
+  
+  cat("\nMethod2:\n")
+  print(summary(method2_final[[v]]))
+  
+  # Plot comparison
+  par(mfrow=c(1,3), mar=c(5,5,4,2))
+  
+  hist(final_invalid_removed[[v]],
+       main=paste(v,"Original"),
+       col="skyblue",
+       xlab=v,
+       border="white")
+  
+  hist(method1_set[[v]],
+       main=paste(v,"Method1 (Mean/Median)"),
+       col="orange",
+       xlab=v,
+       border="white")
+  
+  hist(method2_final[[v]],
+       main=paste(v,"Method2 (MICE)"),
+       col="lightgreen",
+       xlab=v,
+       border="white")
+  
+}
+
+# Revenue: The variable revenue originally contained 7424 missing values, which were successfully imputed using both Mean/Median and MICE methods, resulting in no remaining missing values. The distributions after imputation remain strongly right-skewed, which is expected for revenue data because most products generate low to moderate sales, while a small number of products produce very high revenue, creating a long right tail. Since the overall distribution is preserved after imputation, it indicates that the imputation process did not distort the natural pattern of the data, and the MICE method provides slightly more realistic estimates by using relationships between variables.
+
+# Profit : The variable profit originally contained 5919 missing values, which were successfully imputed using both the Mean/Median method (Method 1) and the MICE method (Method 2), resulting in no remaining missing values in the dataset. A comparison between the two methods shows that the imputed values are not identical, indicating that each method estimates missing values differently. While the mean profit remains almost the same (around 769) in both datasets, there are slight differences in the spread of the distribution, particularly in the third quartile and maximum values, where the MICE method produces slightly higher values. This suggests that MICE estimates missing values using relationships with other variables, rather than replacing them with a single central statistic like the mean or median. The histogram comparison also shows that the overall distribution pattern remains similar across the original and imputed datasets, indicating that the imputation process did not distort the natural structure of the data. Additionally, the presence of both negative and positive profit values is realistic, as some products may incur losses while others generate profit in real-world business scenarios. Overall, although both methods successfully handled missing values, the MICE method preserves variability and relationships in the data more effectively, making it a more realistic imputation approach.
+
+# Daily demand : The variable daily_demand originally contained 7,292 missing values, which were successfully handled using both the Mean/Median imputation method (Method 1) and the MICE imputation method (Method 2), leaving no missing values in either dataset. The histogram comparison shows that the overall distribution remains right-skewed in all three cases (original, Method1, and Method2), indicating that most products have low to moderate daily demand, while only a small number of products experience very high demand, creating a long right tail. This pattern is normal and realistic for retail or supply chain data, where only a few items sell in large quantities. The summary statistics also show that the median demand remains the same (33) in both methods, while the mean and upper quartile values differ slightly, with MICE producing slightly higher estimates, suggesting that it captures relationships between variables when imputing missing values. Overall, since the shape of the distribution is preserved after imputation, it indicates that both methods filled the missing values without distorting the natural demand pattern of the data, while MICE provides slightly more variability and realistic estimates.
+
+# Distribution hours : The variable distribution_hours originally contained 7,548 missing values, which were successfully imputed using both the Mean/Median method (Method 1) and the MICE method (Method 2), leaving no missing values in either dataset. The histograms show that the overall distribution pattern remains very similar across the original, Method1, and Method2 datasets, indicating that the imputation process did not significantly alter the natural structure of the data. Most observations are concentrated between approximately 20 to 60 hours, suggesting that the majority of product distribution processes occur within this time range, while only a few cases extend to very high values near the upper limit (~136 hours), creating a slight right tail. The summary statistics for both methods are also very close, with similar medians (around 38.5 hours) and means (around 39–40 hours), which confirms that both imputation methods preserved the central tendency and spread of the variable. Overall, the results indicate that the missing values were handled effectively without distorting the original distribution, while the MICE method provides slightly more realistic estimates by considering relationships with other variables.
+
+# The variable demand_variability originally contained 7,378 missing values, which were successfully imputed using both the Mean/Median method (Method 1) and the MICE method (Method 2), leaving no missing values after imputation. The histograms show that the overall distribution remains very similar across the original, Method1, and Method2 datasets, indicating that the imputation process did not distort the natural pattern of the data. Most observations lie between approximately 0.2 and 0.5, suggesting that the majority of products experience moderate variability in demand, while only a few observations reach higher variability levels near 0.8–0.9. The summary statistics for both methods are also very close, with the median remaining 0.30 and only slight differences in the mean (around 0.30) and quartile values, confirming that both imputation methods preserved the central tendency and spread of the variable. Overall, the similarity in distribution and statistics indicates that missing values were handled effectively without altering the underlying demand variability pattern, while the MICE method provides slightly more realistic estimates by using relationships between variables.
+
+# CONCLUSION : The comparison of histograms and summary statistics showed that both imputation methods successfully handled missing values without significantly altering the original data distribution. However, the MICE method produced slightly more realistic estimates by considering relationships among variables. Therefore, the MICE imputed dataset was selected for further analysis.
+```
+```{r, echo=TRUE}
+# ===============================
+# FINAL DATASET
+# ===============================
+data_final <- method2_final
+
+
+# ===============================
+# STEP 1: LOG TRANSFORMATION (for highly skewed variables)
+# ===============================
+library(e1071)
+
+cat("Skewness BEFORE transformation:\n")
+cat("  revenue    :", round(skewness(data_final$revenue,    na.rm = TRUE), 3), "\n")
+cat("  waste_cost :", round(skewness(data_final$waste_cost, na.rm = TRUE), 3), "\n")
+cat("  profit     :", round(skewness(data_final$profit,     na.rm = TRUE), 3), "\n")
+
+# Apply transformations
+data_final$revenue    <- log1p(data_final$revenue)
+data_final$waste_cost <- log1p(data_final$waste_cost)
+
+# Profit can be negative → signed log
+data_final$profit <- sign(data_final$profit) * log1p(abs(data_final$profit))
+
+cat("\nSkewness AFTER transformation:\n")
+cat("  revenue    :", round(skewness(data_final$revenue,    na.rm = TRUE), 3), "\n")
+cat("  waste_cost :", round(skewness(data_final$waste_cost, na.rm = TRUE), 3), "\n")
+cat("  profit     :", round(skewness(data_final$profit,     na.rm = TRUE), 3), "\n")
+
+
+# ===============================
+# STEP 2: LOGICAL DATA CORRECTION
+# ===============================
+
+# Storage temperature realistic range
+data_final$storage_temp <- ifelse(
+  data_final$storage_temp < -5 | data_final$storage_temp > 10,
+  NA,
+  data_final$storage_temp
+)
+
+
+# ===============================
+# STEP 3: WINSORIZATION (moderate outliers only)
+# ===============================
+library(ggplot2)
+
+outlier_vars <- c(
+  "daily_demand",
+  "selling_price",
+  "cost_price",
+  "distribution_hours",
+  "storage_temp",
+  "temp_deviation"
+)
+
+for (v in outlier_vars) {
+  
+  Q1  <- quantile(data_final[[v]], 0.25, na.rm = TRUE)
+  Q3  <- quantile(data_final[[v]], 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+  
+  lower <- Q1 - 1.5 * IQR_val
+  upper <- Q3 + 1.5 * IQR_val
+  
+  # Count before
+  before <- sum(data_final[[v]] < lower | data_final[[v]] > upper, na.rm = TRUE)
+  
+  # Boxplot BEFORE
+  p1 <- ggplot(data_final, aes(x = "", y = .data[[v]])) +
+    geom_boxplot(fill = "skyblue", color = "black",
+                 outlier.colour = "red", outlier.size = 1.5) +
+    labs(title = paste("Before Treatment:", v), y = v, x = "") +
+    theme_minimal(base_size = 12)
+  print(p1)
+  
+  # Winsorization (capping)
+  data_final[[v]] <- pmin(pmax(data_final[[v]], lower), upper)
+  
+  # Count after
+  after <- sum(data_final[[v]] < lower | data_final[[v]] > upper, na.rm = TRUE)
+  
+  # Boxplot AFTER
+  p2 <- ggplot(data_final, aes(x = "", y = .data[[v]])) +
+    geom_boxplot(fill = "lightgreen", color = "black",
+                 outlier.colour = "red", outlier.size = 1.5) +
+    labs(title = paste("After Treatment:", v), y = v, x = "") +
+    theme_minimal(base_size = 12)
+  print(p2)
+  
+  cat("Variable:", v,
+      "| Outliers BEFORE:", before,
+      "| AFTER:", after, "\n")
+}
+
+
+# ===============================
+# STEP 4: RE-IMPUTATION (after introducing NA)
+# ===============================
+library(mice)
+
+data_final <- complete(mice(data_final, m = 1))
+
+
+# ===============================
+# STEP 5: FINAL CHECK
+# ===============================
+cat("\nFinal dataset dimensions:", nrow(data_final), "x", ncol(data_final), "\n")
+cat("Total missing values remaining:", sum(is.na(data_final)), "\n")
+
+```
+
+```{r}
+colSums(is.na(data_final))
+```
+```{r}
+colSums(is.na(method2_final))
+```
+
+
+
+
+

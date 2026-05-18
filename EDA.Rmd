@@ -1,0 +1,783 @@
+---
+title: "EDA_206"
+author: "Kratika Bansal"
+date: "2026-04-02"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+```{r}
+my_data <- read.csv("C:/Users/krati/OneDrive/Desktop/perishable_goods_management.csv")
+original_data <- my_data
+str(original_data)
+summary(original_data)
+sum(is.na(original_data))
+sapply(original_data, class)
+
+
+
+```
+
+
+```{r}
+# Professional Animated EDA for Perishable Goods Dataset
+# Libraries
+library(tidyverse)
+library(lubridate)
+library(plotly)
+library(gganimate)
+library(corrplot)
+library(GGally)
+
+
+
+# Data Preparation
+original_data$transaction_date <- as.Date(original_data$transaction_date)
+original_data$expiration_date <- as.Date(original_data$expiration_date)
+
+
+
+# -----------------------------
+# 2. KPI Snapshot
+# -----------------------------
+cat('Total Revenue:', sum(original_data$revenue), '\n')
+cat('Total Profit:', sum(original_data$profit), '\n')
+cat('Average Waste %:', mean(original_data$waste_pct), '\n')
+cat('Spoilage Rate:', mean(original_data$was_spoiled)*100, '%\n')
+
+
+
+```
+```{r}
+summary(original_data$revenue)
+summary(original_data$profit)
+summary(original_data$waste_pct)
+mean(original_data$was_spoiled)
+```
+
+```{r}
+n_distinct(original_data$store_id)
+n_distinct(original_data$region)
+n_distinct(original_data$supplier_id)
+n_distinct(original_data$category)
+
+range(as.Date(original_data$transaction_date))
+
+# Interpretation: Dataset spans 50 stores, 5 regions, and 20 suppliers over the period 2023-01-01 to 2024-12-31, providing broad coverage of perishable goods operations.”
+
+# Category distribution
+ggplot(original_data, aes(x = category)) +
+  geom_bar(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Distribution of Records Across Product Categories",
+    x = "Category",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# Region distribution
+ggplot(original_data, aes(x = region)) +
+  geom_bar(fill = "darkgreen") +
+  labs(
+    title = "Distribution of Records Across Regions",
+    x = "Region",
+    y = "Count"
+  ) +
+  theme_minimal()
+  
+# Quality grade distribution
+ggplot(original_data, aes(x = quality_grade)) +
+  geom_bar(fill = "purple") +
+  labs(
+    title = "Distribution of Product Quality Grades",
+    x = "Quality Grade",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# Promotion status distribution
+ggplot(original_data, aes(x = factor(is_promoted))) +
+  geom_bar(fill = "orange") +
+  labs(
+    title = "Promoted vs Non-Promoted Records",
+    x = "Is Promoted",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# Store wise record distribution
+store_counts <- original_data %>%
+  count(store_id)
+
+ggplot(store_counts, aes(x = reorder(store_id, n), y = n)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Record Distribution Across Stores",
+    x = "Store ID",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# supplier wise distribution
+supplier_counts <- original_data %>%
+  count(supplier_id)
+
+ggplot(supplier_counts, aes(x = reorder(supplier_id, n), y = n)) +
+  geom_col(fill = "darkred") +
+  coord_flip() +
+  labs(
+    title = "Record Distribution Across Suppliers",
+    x = "Supplier ID",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# Monthly transaction volume trend
+monthly_counts <- original_data %>%
+  count(month)
+
+ggplot(monthly_counts, aes(x = factor(month), y = n)) +
+  geom_col(fill = "purple") +
+  labs(
+    title = "Transaction Volume by Month",
+    x = "Month",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# Distribution of core business metrics
+# PROFIT
+original_data$profit_status <- ifelse(
+  original_data$profit >= 0,
+  "Profit",
+  "Loss"
+)
+# Profit vs Loss Count Plot
+ggplot(original_data, aes(x = profit_status, fill = profit_status)) +
+  geom_bar() +
+  labs(
+    title = "Profit-Making vs Loss-Making Transactions",
+    x = "Transaction Outcome",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("Profit" = "steelblue", "Loss" = "tomato"))
+
+
+
+# Binning of profit
+quantile(original_data$profit, probs = seq(0, 1, 0.1))
+
+original_data$profit_bucket_data_driven <- cut(
+  original_data$profit,
+  breaks = c(
+    -Inf,
+    -762.602,
+    -149.608,
+    125.400,
+    782.430,
+    2524.662,
+    Inf
+  ),
+  labels = c(
+    "Extreme Loss",
+    "Moderate Loss",
+    "Near Break-even",
+    "Moderate Profit",
+    "High Profit",
+    "Extreme Profit"
+  )
+)
+
+# Profit and loss segmentation plot
+ggplot(original_data, aes(x = profit_bucket_data_driven, fill = profit_bucket_data_driven)) +
+  geom_bar() +
+  labs(
+    title = "Distribution Across Profit/Loss Segments",
+    x = "Profitability Segment",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  ) +
+  guides(fill = "none")
+
+original_data %>%
+  count(profit_bucket_data_driven) %>%
+  mutate(percentage = round(n / sum(n) * 100, 2))
+
+
+
+
+# category wise profitability
+category_profit_mix <- original_data %>%
+  count(category, profit_bucket_data_driven) %>%
+  group_by(category) %>%
+  mutate(pct = n / sum(n))
+
+ggplot(category_profit_mix,
+       aes(x = category, y = pct, fill = profit_bucket_data_driven)) +
+  geom_col() +
+  labs(
+    title = "Profitability Segment Mix by Category",
+    x = "Category",
+    y = "Proportion"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+avg_profit_cat <- original_data %>%
+  group_by(category) %>%
+  summarise(avg_profit = mean(profit))
+
+ggplot(avg_profit_cat, aes(x = reorder(category, avg_profit), y = avg_profit)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Average Profit by Category",
+    x = "Category",
+    y = "Average Profit"
+  ) +
+  theme_minimal()
+
+# Waste pct
+
+ggplot(original_data, aes(x = waste_pct)) +
+  geom_histogram(
+    bins = 30,
+    fill = "tomato",
+    color = "white"
+  ) +
+  labs(
+    title = "Distribution of Waste Percentage",
+    x = "Waste %",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+# Waste by category
+waste_cat <- original_data %>%
+  group_by(category) %>%
+  summarise(avg_waste = mean(waste_pct))
+
+ggplot(waste_cat, aes(x = reorder(category, avg_waste), y = avg_waste)) +
+  geom_col(fill = "orange") +
+  coord_flip() +
+  labs(
+    title = "Average Waste Percentage by Category",
+    x = "Category",
+    y = "Average Waste %"
+  ) +
+  theme_minimal()
+
+# Spoilage rate by category
+spoil_cat <- original_data %>%
+  group_by(category) %>%
+  summarise(spoil_rate = mean(was_spoiled) * 100)
+
+ggplot(spoil_cat, aes(x = reorder(category, spoil_rate), y = spoil_rate)) +
+  geom_col(fill = "darkred") +
+  coord_flip() +
+  labs(
+    title = "Spoilage Rate by Category",
+    x = "Category",
+    y = "Spoilage Rate (%)"
+  ) +
+  theme_minimal()
+
+
+```
+```{r}
+# Quality grade within each segment
+grade_seg <- original_data %>%
+  count(quality_grade, profit_bucket_data_driven) %>%
+  group_by(profit_bucket_data_driven) %>%
+  mutate(pct = n / sum(n) * 100)
+
+ggplot(grade_seg, aes(x = profit_bucket_data_driven, y = pct, fill = quality_grade)) +
+  geom_col(position = "dodge", alpha = .85) +
+  scale_fill_manual(values = c("A"="#27AE60","B"="#E67E22","C"="#C0392B"),
+                    name = "Quality Grade") +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(title = "Quality Grade Mix Within Each Profit Segment",
+       subtitle = "Grade C products are overrepresented in loss segments",
+       x = NULL, y = "% within Segment") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1))
+
+# Interpretation: Grade C products account for a disproportionately higher share of Extreme Loss and Moderate Loss transactions compared to their overall prevalence. This suggests that receiving lower-quality stock is a leading risk factor for profitability loss — independent of category.
+
+# Waste % distribution by profitability segments
+ggplot(original_data, aes(x = profit_bucket_data_driven, y = waste_pct, fill = profit_bucket_data_driven)) +
+  geom_boxplot() +
+  stat_summary(fun = mean, geom = "point", color = "white", size = 3) +
+  labs(title = "Waste % by Profit Segment (Boxplot)",
+       y = "Waste %", x = NULL) +
+  theme_minimal()
+# The boxplot shows a clear inverse relationship between waste and profitability. Higher waste segments have higher median waste and variability, while profitable segments show low and consistent waste levels.
+
+
+
+# PHARMACEUTICAL PRODUCTS ANALYSIS
+
+pharma_loss <- original_data %>%
+  filter(category == "Pharmaceuticals", profit < 0)
+
+product_loss <- pharma_loss %>%
+  group_by(product_name) %>%
+  summarise(total_loss = sum(abs(profit), na.rm = TRUE)) %>%
+  arrange(desc(total_loss))
+
+top_loss_products <- product_loss %>% head(10)
+options(scipen = 999)
+ggplot(top_loss_products,
+       aes(x = reorder(product_name, total_loss),
+           y = total_loss)) +
+  geom_col(fill = "red") +
+  coord_flip() +
+  labs(
+    title = "Top Loss-Contributing Products (Pharmaceuticals)",
+    x = "Product",
+    y = "Total Loss"
+  ) +
+  theme_minimal()
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+pharma_diag <- original_data %>%
+  filter(category == "Pharmaceuticals", profit < 0) %>%
+  group_by(product_name) %>%
+  summarise(
+    waste = round(mean(waste_pct), 1),
+    shelf_life = round(mean(shelf_life_days), 0),
+    temp_dev = round(mean(temp_deviation), 2),
+    spoilage = round(mean(spoilage_risk), 2),
+    sales = round(mean(units_sold), 0),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(-product_name, names_to = "factor", values_to = "value")
+
+ggplot(pharma_diag,
+       aes(x = factor, y = product_name, fill = value)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  
+  geom_text(aes(label = value),
+            size = 3.2,
+            color = "white",
+            fontface = "bold") +
+  
+  scale_fill_gradient(low = "#9FE1CB", high = "#E24B4A",
+                      name = "Value") +
+  
+  labs(title = "Loss Diagnosis — Pharma Products × Key Factors",
+       x = NULL, y = NULL) +
+  
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+
+pharma_diag %>%
+  mutate(value_scaled = scale(value)) %>%
+  ggplot(aes(x = factor, y = product_name, fill = value_scaled)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = round(value,1)),
+            size = 3.2, color = "black", fontface = "bold") +
+  scale_fill_gradient2(low = "#2C7BB6", mid = "white", high = "#D7191C",
+                       midpoint = 0, name = "Relative Impact") +
+  labs(title = "Loss Diagnosis — Standardized View") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+
+# What drives extreme loss in pharma vs extreme profit?
+library(kableExtra)
+original_data$spoiled_int <- as.integer(as.character(original_data$was_spoiled))
+pharma <- original_data %>% filter(category == "Pharmaceuticals")
+pharma_compare <- pharma %>%
+  filter(profit_bucket_data_driven %in% c("Extreme Loss","Extreme Profit")) %>%
+  group_by(profit_bucket_data_driven) %>%
+  summarise(
+    Avg_Waste_Pct       = round(mean(waste_pct), 1),
+    Avg_Units_Wasted    = round(mean(units_wasted), 0),
+    Avg_Spoilage_Rate   = round(mean(spoiled_int) * 100, 1),
+    Avg_Distribution_Hr = round(mean(distribution_hours), 1),
+    Avg_Temp_Abuse      = round(mean(temp_abuse_events), 2),
+    Avg_Discount_Pct    = round(mean(discount_pct), 2),
+    n                   = n()
+  )
+
+kable(pharma_compare,
+      caption = "Pharmaceuticals: Extreme Loss vs Extreme Profit — Driver Comparison") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+```{r}
+# ── Waste Driver Analysis — Pharmaceuticals ────────────────────────────────
+
+pharma_wa <- original_data %>%
+  filter(category == "Pharmaceuticals") %>%
+  mutate(
+    unsold_inventory   = initial_quantity - units_sold,
+    stock_demand_ratio = initial_quantity / (daily_demand + 0.001),
+    spoiled_int        = as.integer(as.character(was_spoiled))
+  )
+
+# 1. Correlation table — what actually correlates with waste_pct?
+waste_drivers <- pharma_wa %>%
+  select(unsold_inventory, stock_demand_ratio, daily_demand,
+         shelf_life_days, temp_deviation, temp_abuse_events,
+         distribution_hours, spoiled_int, discount_pct, waste_pct) %>%
+  cor(use = "complete.obs") %>%
+  as.data.frame() %>%
+  select(waste_pct) %>%
+  arrange(desc(abs(waste_pct)))
+
+kable(round(waste_drivers, 4),
+      caption = "Correlations with Waste % — Pharmaceuticals") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+
+# 2. The core finding: overstocking visualised
+ggplot(pharma_wa, aes(x = unsold_inventory, y = waste_pct)) +
+  geom_point(alpha = 0.1, color = "#E24B4A", size = 0.7) +
+  geom_smooth(method = "lm", color = "#2980B9", se = TRUE) +
+  labs(
+    title = "Pharma Waste % vs Unsold Inventory",
+    subtitle = "r = 0.79 — overstocking is the dominant driver of pharma waste",
+    x = "Unsold Inventory (units)",
+    y = "Waste %"
+  ) +
+  theme_minimal(base_size = 13)
+
+# 3. Low daily demand is the root cause of overstocking
+ggplot(pharma_wa, aes(x = daily_demand, y = waste_pct)) +
+  geom_point(alpha = 0.1, color = "#8E44AD", size = 0.7) +
+  geom_smooth(method = "lm", color = "#E74C3C", se = TRUE) +
+  labs(
+    title = "Pharma Waste % vs Daily Demand",
+    subtitle = "r = -0.42 — low demand directly drives waste accumulation",
+    x = "Daily Demand (units/day)",
+    y = "Waste %"
+  ) +
+  theme_minimal(base_size = 13)
+
+library(dplyr)
+
+# ── Linear Regression — Pharma Waste Drivers ────────────────────
+
+library(car)
+
+pharma_lm <- original_data %>%
+  filter(category == "Pharmaceuticals") %>%
+  mutate(
+    unsold_inventory = initial_quantity - units_sold,
+    spoiled_int      = as.integer(as.character(was_spoiled))
+  )
+
+# Step 1:
+model_full <- lm(
+  waste_pct ~ unsold_inventory + spoiled_int + daily_demand +
+              shelf_life_days + discount_pct + temp_deviation,
+  data = pharma_lm
+)
+
+# Step 2: Check VIF — all should be < 5 now
+cat("VIF scores:\n")
+print(vif(model_full))
+
+# Step 3: Dropping insignificant predictors 
+model_final <- lm(
+  waste_pct ~ unsold_inventory + spoiled_int + daily_demand + shelf_life_days,
+  data = pharma_lm
+)
+
+summary(model_final)
+
+# Step 4: Residual diagnostics
+par(mfrow = c(2, 2))
+plot(model_final)   
+
+# Step 5: Report
+cat("\nInterpretation:\n")
+cat("R² =", round(summary(model_final)$r.squared, 4), "\n")
+cat("Every 1 additional unsold unit increases waste % by",
+    round(coef(model_final)["unsold_inventory"], 4), "percentage points\n")
+cat("A spoiled product wastes", round(coef(model_final)["spoiled_int"], 2),
+    "% more than a non-spoiled one, all else equal\n")
+cat("Every 1 unit increase in daily demand reduces waste by",
+    abs(round(coef(model_final)["daily_demand"], 2)), "percentage points\n")
+
+
+```
+```{r}
+# HYPOTHESIS TESTING
+
+# Normality check — Anderson-Darling on a 5,000-row sample
+# (full 100k makes all parametric tests reject trivially due to power)
+set.seed(42)
+ad_result <- nortest::ad.test(sample(original_data$waste_pct, 5000))
+cat("Anderson-Darling p-value (waste_pct):", round(ad_result$p.value, 6), "\n")
+
+# temperature abuse vs spoilage
+# H0: Temperature abuse events have no effect on spoilage outcome
+# H1: Products with more temperature abuse events are more likely to spoil
+grp_sp  <- original_data$temp_abuse_events[original_data$spoiled_int == 1]
+grp_ns  <- original_data$temp_abuse_events[original_data$spoiled_int == 0]
+h1      <- wilcox.test(grp_sp, grp_ns)
+
+cat("Mean (spoiled)    :", round(mean(grp_sp), 3), "\n")
+cat("Mean (not spoiled):", round(mean(grp_ns), 3), "\n")
+cat("Wilcoxon W =", h1$statistic, "| p =", format(h1$p.value, scientific=TRUE), "\n")
+cat("DECISION:", ifelse(h1$p.value < .05,
+    "REJECT H0 — temperature abuse significantly increases spoilage.",
+    "FAIL TO REJECT H0"), "\n")
+
+# Mark down pricing vs waste
+# H0: Markdown pricing does not reduce waste percentage
+# H1: Markdown pricing significantly reduces waste %
+grp_md  <- original_data$waste_pct[original_data$markdown_applied == "1"]
+grp_nmd <- original_data$waste_pct[original_data$markdown_applied == "0"]
+h2      <- wilcox.test(grp_md, grp_nmd)
+
+cat("Mean waste % (markdown)   :", round(mean(grp_md), 2), "%\n")
+cat("Mean waste % (no markdown):", round(mean(grp_nmd), 2), "%\n")
+cat("Reduction                 :", round(mean(grp_nmd) - mean(grp_md), 2), "pp\n")
+cat("Wilcoxon p =", format(h2$p.value, scientific=TRUE), "\n")
+cat("DECISION:", ifelse(h2$p.value < .05,
+    "REJECT H0 — markdown pricing significantly reduces waste.",
+    "FAIL TO REJECT H0"), "\n")
+
+# Interpretation:
+# Waste % is not normally distributed (p ≈ 0) → non-parametric tests used
+# Temperature abuse is higher in spoiled products → significantly increases spoilage (p < 0.001)
+# Markdown pricing reduces waste by ~3% → statistically significant (p < 0.01)
+```
+
+```{r}
+
+library(caret)
+feature_cols <- c(
+  "shelf_life_days","days_remaining_at_purchase","storage_temp",
+  "temp_deviation","base_price","cost_price","initial_quantity",
+  "spoilage_sensitivity","day_of_week","is_weekend","month",
+  "daily_demand","demand_variability","temp_abuse_events",
+  "distribution_hours","handling_score","packaging_score",
+  "spoilage_risk","days_until_expiry","markdown_applied",
+  "discount_pct","supplier_score","is_promoted","category","region"
+)
+
+df_model <- original_data[, c(feature_cols, "was_spoiled", "waste_pct")]
+df_model <- na.omit(df_model)
+cat("Model dataset:", nrow(df_model), "rows ×", length(feature_cols), "features\n")
+
+# Random forest classification model
+set.seed(42)
+train_idx <- createDataPartition(df_model$was_spoiled, p = .8, list = FALSE)
+train_clf <- df_model[train_idx,  c(feature_cols, "was_spoiled")]
+test_clf  <- df_model[-train_idx, c(feature_cols, "was_spoiled")]
+
+cat("Train:", nrow(train_clf), "| Test:", nrow(test_clf), "\n")
+cat("Class balance:\n")
+print(prop.table(table(train_clf$was_spoiled)))
+
+# Only ~19.4 % of records are spoiled.
+# Without balancing, a naive classifier achieves 80.6 % accuracy by
+# simply predicting "Not Spoiled" always — detecting no true positives.
+# ROSE (Random Over-Sampling Examples) creates a balanced training set
+# through synthetic oversampling to address this class imbalance.
+train_clf <- train_clf %>%
+  mutate(across(where(is.character), as.factor))
+
+test_clf <- test_clf %>%
+  mutate(across(where(is.character), as.factor))
+
+train_clf$was_spoiled <- as.factor(train_clf$was_spoiled)
+test_clf$was_spoiled  <- as.factor(test_clf$was_spoiled)
+
+library(ROSE)
+train_balanced <- ROSE(was_spoiled ~ .,
+                       data = train_clf, seed = 42)$data
+cat("Balanced class distribution:\n")
+
+print(table(train_balanced$was_spoiled))
+
+# ntree = 200: sufficient for OOB error stabilisation
+# mtry  = 5:  ~ sqrt(25 predictors), standard RF default
+library(randomForest)
+rf_model <- randomForest(
+  was_spoiled ~ .,
+  data       = train_balanced,
+  ntree      = 200,
+  mtry       = 5,
+  importance = TRUE
+)
+print(rf_model)
+
+rf_pred <- predict(rf_model, newdata = test_clf)
+rf_prob <- predict(rf_model, newdata = test_clf, type = "prob")[, "1"]
+
+cm_rf <- confusionMatrix(rf_pred, test_clf$was_spoiled, positive = "1")
+print(cm_rf)
+
+library(pROC)
+
+roc_rf <- roc(as.numeric(as.character(test_clf$was_spoiled)), rf_prob)
+cat("\nAUC-ROC:", round(auc(roc_rf), 4), "\n")
+
+plot(roc_rf, col = "#E74C3C", lwd = 2, print.auc = TRUE,
+     main = paste("ROC Curve — Random Forest (Spoilage)\nAUC =",
+                  round(auc(roc_rf), 4)))
+varImpPlot(rf_model,
+           main  = "Variable Importance — Random Forest (Spoilage Classification)",
+           col   = "#2980B9", pch = 19, n.var = 15)
+
+data.frame(trees     = seq_len(rf_model$ntree),
+           oob_error = rf_model$err.rate[, "OOB"] * 100) %>%
+  ggplot(aes(x = trees, y = oob_error)) +
+  geom_line(color = "#E74C3C", size = 1.1) +
+  labs(title = "OOB Error Convergence — Random Forest",
+       subtitle = "Error stabilises before ntree = 200, confirming sufficient trees",
+       x = "Number of Trees", y = "OOB Error Rate (%)") +
+  theme_minimal(base_size = 13)
+
+# INTERPRETATION:
+# Model Performance (ROC & AUC)
+# AUC = 0.578 → model performance is weak (slightly better than random)
+# Model has low ability to distinguish spoiled vs non-spoiled products
+# Indicates missing patterns or need for better features
+
+
+# Class Imbalance Handling (ROSE)
+# Original data had ~19% spoiled vs 81% non-spoiled
+# ROSE created balanced dataset → improved learning of minority class
+# Without this, model would bias towards “not spoiled”
+
+
+# Variable Importance
+# Top drivers of spoilage:
+# spoilage_risk (strongest predictor)
+# packaging_score
+# markdown_applied
+# discount_pct
+# daily_demand
+# Operational factors (handling, temp abuse, distribution) also contribute
+# Indicates spoilage is driven by product quality + operational inefficiency
+
+
+# OOB Error (Model Stability)
+# Error decreases and stabilises before 200 trees
+# Confirms model has sufficient number of trees
+# Final OOB error ≈ 42–43% → high error → weak model
+
+
+# Overall Conclusion
+# Model is not very strong → AUC low, error high
+# But still useful for:
+# Identifying key drivers of spoilage
+# Supporting EDA findings
+
+summary(model_full)
+
+```
+DOCUMENTATION:
+1. Objective- This analysis aims to identify the key drivers of loss in perishable goods, with a special focus on the Pharmaceuticals category. The goal is to understand whether high loss is driven by waste, spoilage, demand mismatch, or operational factors such as temperature and distribution.
+
+2. Data Preparation: Additional features were created to better capture operational inefficiencies:
+
+Stock-Demand Ratio: Measures overstocking relative to demand
+Unsold Inventory: Captures leftover stock after sales
+Spoilage Indicator: Converts spoilage into numeric form for modeling
+
+These features help in diagnosing the root causes of waste and loss.
+3. Exploratory Data Analysis:
+
+Category-Level Waste Analysis-
+
+The heatmap shows that Pharmaceuticals have consistently high waste levels (~36–38%) across regions, indicating that the issue is category-driven rather than region-specific.
+
+Top Loss-Contributing Products-
+
+The bar chart highlights that Probiotics contribute the highest loss, followed by Eye Drops and Antibiotics. This suggests that certain pharma products are more prone to inefficiencies.
+
+Waste vs Profitability-
+
+The boxplot shows a clear inverse relationship between waste and profitability. Segments with higher waste (Extreme Loss) have higher median waste and variability, while profitable segments show low and stable waste levels.
+
+This indicates that waste is a major determinant of profitability.
+
+4. Root Cause Analysis:
+
+Regression model-
+
+A linear regression model was used to identify the key drivers of waste.
+
+Key Findings:
+Unsold Inventory has the strongest positive impact on waste
+Spoilage significantly increases waste
+Daily Demand reduces waste (higher demand = less leftover stock)
+Shelf Life reduces waste (longer shelf life improves sell-through)
+Temperature deviation has limited impact in this dataset
+
+This confirms that waste is primarily driven by inventory and demand mismatch, rather than environmental factors.
+
+5. Focus Analysis: Probiotics
+
+Probiotics show the highest loss contribution due to:
+
+High stock relative to demand
+Significant unsold inventory
+Presence of spoilage
+Moderate shelf life constraints
+
+This indicates that overstocking combined with demand mismatch is the primary reason for high losses in this category.
+
+6. Hypothesis Testing: A normality test (Anderson-Darling) was performed on the waste percentage.
+
+p-value ≈ 0
+The null hypothesis of normality is rejected
+
+This indicates that the data is not normally distributed, justifying the use of non-parametric methods and machine learning models.
+
+7. Machine Learning Model (Spoilage Prediction): A Random Forest classification model was built to predict whether a product will be spoiled.
+
+Steps:
+Data split into training (80%) and testing (20%) sets
+Class imbalance handled using ROSE (oversampling)
+Model trained using multiple features including demand, temperature, and inventory
+
+Model Evaluation
+ROC Curve was used to evaluate performance
+AUC ≈ 0.58
+
+Interpretation:
+The model performs only slightly better than random, indicating limited predictive power. This suggests that spoilage may depend on additional factors not captured in the dataset.
+
+8. Key Insights:
+
+Waste has a strong negative impact on profitability
+Overstocking is the primary driver of waste
+Unsold inventory is a critical contributor to loss
+Spoilage amplifies waste, especially in pharma products
+Demand plays a more important role than temperature in reducing waste
+High-profit segments show stable and low waste levels
+
+9. Recommendations
+
+Implement demand-driven inventory planning
+Reduce stock levels for low-demand products
+Introduce dynamic pricing and early discounting to clear inventory
+Improve monitoring of high-risk products such as Probiotics
+Optimize replenishment cycles based on demand patterns
+
+10. Conclusion
+
+The analysis demonstrates that waste is the primary driver of loss in perishable goods. High waste is mainly caused by overstocking and demand mismatch, which leads to unsold inventory and spoilage. Improving inventory management and aligning stock with demand can significantly reduce losses and improve profitability.
+
+
+
